@@ -6,9 +6,13 @@ from .ibmappliance import IBMAppliance
 from .ibmappliance import IBMError
 from .ibmappliance import IBMFatal
 from ibmsecurity.utilities import tools
+import os
 
 
 class ISAMAppliance(IBMAppliance):
+    homedir = os.path.expanduser("~")
+    cache_dir = homedir + '/.ansible/tmp/ansible_facts/'
+
     def __init__(self, hostname, user, lmi_port=443):
         self.logger = logging.getLogger(__name__)
         self.logger.debug('Creating an ISAMAppliance')
@@ -519,11 +523,40 @@ class ISAMAppliance(IBMAppliance):
         try:
             self.get_version()
 
-            # Check if appliance is setup before collecting Activation information
-            import ibmsecurity.isam.base.setup_complete
-            ret_obj = ibmsecurity.isam.base.setup_complete.get(self)
-            if ret_obj['data'].get('configured') is True:
+            ansible_cache_file = ISAMAppliance.cache_dir + self.hostname
+            cached_obj = {}
+
+            if os.path.isfile(ansible_cache_file):
+                # read file
+                with open(ansible_cache_file, 'r') as myfile:
+                    data=myfile.read()
+                myfile.close()
+                # parse file
+                cached_obj = json.loads(data)
+
+            if 'configured' in cached_obj and cached_obj['configured'] == True:
                 self.get_activations()
+            else:
+                caching_object = {}
+                # Check if appliance is setup before collecting Activation information
+                import ibmsecurity.isam.base.setup_complete
+                ret_obj = ibmsecurity.isam.base.setup_complete.get(self)
+                if ret_obj['data'].get('configured') is True:
+                    self.get_activations()
+
+                caching_object['configured'] = ret_obj['data']['configured']
+                # read file again, to update before writing
+                with open(ansible_cache_file, 'r') as myfile:
+                    data=myfile.read()
+                myfile.close()
+                # parse file
+                cached_obj = json.loads(data)
+
+                cached_obj.update(caching_object)
+                with open(ansible_cache_file, 'w') as outfile:
+                    json.dump(cached_obj, outfile, indent=4, sort_keys=True)
+                outfile.close()
+            #print self.facts
         # Be sure to let fatal error unconditionally percolate up the stack
         except IBMFatal:
             raise
@@ -537,29 +570,67 @@ class ISAMAppliance(IBMAppliance):
 
         When firmware are installed or partition are changed, then this value is updated
         """
+        ansible_cache_file = ISAMAppliance.cache_dir + self.hostname
+        cached_obj = {}
+
+        if os.path.isfile(ansible_cache_file):
+            # read file
+            with open(ansible_cache_file, 'r') as myfile:
+                data=myfile.read()
+            myfile.close()
+            # parse file
+            cached_obj = json.loads(data)
+
         self.facts['version'] = None
         import ibmsecurity.isam.base.version
         import ibmsecurity.isam.base.firmware
 
+
         try:
-            ret_obj = ibmsecurity.isam.base.version.get(self)
-            self.facts['version'] = ret_obj['data']['firmware_version']
+            if 'version' in cached_obj:
+                self.facts['version'] = cached_obj['version']
+                if tools.version_compare(self.facts['version'], '9.0.3.0') > 0:
+                    if 'model' not in self.facts and 'deployment_model' in cached_obj:
+                        self.facts['model'] = cached_obj['deployment_model']
+                    if 'product_name' not in self.facts and 'product_name' in cached_obj:
+                        self.facts['product_name'] = cached_obj['product_name']
+                    if 'product_description' not in self.facts and 'product_description' in cached_obj:
+                        self.facts['product_description'] = cached_obj['product_description']
+                    if 'firmware_build' not in self.facts and 'firmware_build' in cached_obj:
+                        self.facts['firmware_build'] = cached_obj['firmware_build']
+                    if 'firmware_label' not in self.facts and 'firmware_label' in cached_obj:
+                        self.facts['firmware_label'] = cached_obj['firmware_label']
+            else:
+                caching_object = {}
+                ret_obj = ibmsecurity.isam.base.version.get(self)
+                self.facts['version'] = ret_obj['data']['firmware_version']
+                caching_object['version'] = self.facts['version']
 
-            if tools.version_compare(self.facts['version'], '9.0.3.0') > 0:
-                if 'deployment_model' in ret_obj['data']:
-                    self.facts['model'] = ret_obj['data']['deployment_model']
+                if tools.version_compare(self.facts['version'], '9.0.3.0') > 0:
+                    if 'model' not in self.facts and 'deployment_model' in ret_obj['data']:
+                        self.facts['model'] = ret_obj['data']['deployment_model']
+                        caching_object['deployment_model'] = ret_obj['data']['deployment_model']
 
-                if 'product_name' in ret_obj['data']:
-                    self.facts['product_name'] = ret_obj['data']['product_name']
+                    if 'product_name' not in self.facts and 'product_name' in ret_obj['data']:
+                        self.facts['product_name'] = ret_obj['data']['product_name']
+                        caching_object['product_name'] = ret_obj['data']['product_name']
 
-                if 'product_description' in ret_obj['data']:
-                    self.facts['product_description'] = ret_obj['data']['product_description']
+                    if 'product_description' not in self.facts and 'product_description' in ret_obj['data']:
+                        self.facts['product_description'] = ret_obj['data']['product_description']
+                        caching_object['product_description'] = ret_obj['data']['product_description']
 
-                if 'firmware_build' in ret_obj['data']:
-                    self.facts['firmware_build'] = ret_obj['data']['firmware_build']
+                    if 'firmware_build' not in self.facts and 'firmware_build' in ret_obj['data']:
+                        self.facts['firmware_build'] = ret_obj['data']['firmware_build']
+                        caching_object['firmware_build'] = ret_obj['data']['firmware_build']
 
-                if 'firmware_label' in ret_obj['data']:
-                    self.facts['firmware_label'] = ret_obj['data']['firmware_label']
+                    if 'firmware_label' not in self.facts and 'firmware_label' in ret_obj['data']:
+                        self.facts['firmware_label'] = ret_obj['data']['firmware_label']
+                        caching_object['firmware_label'] = ret_obj['data']['firmware_label']
+
+                cached_obj.update(caching_object)
+                with open(ansible_cache_file, 'w') as outfile:
+                    json.dump(cached_obj, outfile, indent=4, sort_keys=True)
+                outfile.close()
 
         # Be sure to let fatal error unconditionally percolate up the stack
         except IBMFatal:
@@ -582,13 +653,35 @@ class ISAMAppliance(IBMAppliance):
 
         When new modules are activated or old ones de-activated this value is updated.
         """
-        self.facts['activations'] = []
-        import ibmsecurity.isam.base.activation
+        ansible_cache_file = ISAMAppliance.cache_dir + self.hostname
+        cached_obj = {}
 
-        ret_obj = ibmsecurity.isam.base.activation.get(self)
-        for activation in ret_obj['data']:
-            if activation['enabled'] == 'True':
-                self.facts['activations'].append(activation['id'])
+        if os.path.isfile(ansible_cache_file):
+            # read file
+            with open(ansible_cache_file, 'r') as myfile:
+                data=myfile.read()
+            myfile.close()
+            # parse file
+            cached_obj = json.loads(data)
+
+        if 'activations' not in self.facts:
+            if 'activations' in cached_obj:
+                self.facts['activations'] = cached_obj['activations']
+            else:
+                self.facts['activations'] = []
+                import ibmsecurity.isam.base.activation
+                ret_obj = ibmsecurity.isam.base.activation.get(self)
+                for activation in ret_obj['data']:
+                    if activation['enabled'] == 'True':
+                        self.facts['activations'].append(activation['id'])
+
+                caching_object = {}
+                caching_object['activations'] = self.facts['activations']
+
+                cached_obj.update(caching_object)
+                with open(ansible_cache_file, 'w') as outfile:
+                    json.dump(cached_obj, outfile, indent=4, sort_keys=True)
+                outfile.close()
 
     def _log_request(self, method, url, desc):
         self.logger.debug("Request: %s %s desc=%s", method, url, desc)
